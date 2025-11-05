@@ -2,7 +2,8 @@ import os
 import json
 import random
 import string
-from itertools import cycle
+import argparse
+from itertools import cycle, islice
 from sys import stderr
 
 import trio
@@ -23,7 +24,7 @@ def load_routes(directory_path='routes'):
                 yield json.load(file)
 
 
-async def run_bus(url, bus_id, route, send_channel):
+async def run_bus(url, bus_id, route, send_channel, delay):
     route_id = route.get('name')
     coords = route.get('coordinates')
     start = random.randrange(len(coords))
@@ -37,7 +38,7 @@ async def run_bus(url, bus_id, route, send_channel):
                         "lng": lon, "route": route_id
                     }
                 ))
-                await trio.sleep(0.1)
+                await trio.sleep(delay)
     except OSError as ose:
         print('Connection attempt failed: %s' % ose, file=stderr)
 
@@ -49,24 +50,70 @@ async def send_updates(url, receive_channel):
 
 
 async def main():
-    url = 'ws://127.0.0.1:8080'
-    routes = load_routes()
-    limit = trio.Semaphore(20000)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-u', '--url',
+        help='url to send buses data',
+        type=str,
+        default='ws://127.0.0.1:8080' # удалить
+    )
+    parser.add_argument(
+        '-r', '--routes-number',
+        help='quantity of buses routes',
+        type=int,
+        default=1000
+    )
+    parser.add_argument(
+        '-b', '--buses-per-route',
+        help='quantity of buses per route',
+        type=int,
+        default=10
+    )
+    parser.add_argument(
+        '-w', '--websocket-number',
+        help='quantity of opened websockets',
+        type=int,
+        default=10
+    )
+    parser.add_argument(
+        '-e', '--emulator-id',
+        help='prefix to id of buses',
+        type=str,
+        default=''
+    )
+    parser.add_argument(
+        '-t', '--refresh-timeout',
+        help='delay in updating coordinates',
+        default=1
+    )
+    parser.add_argument(
+        '-v', '--logging',
+        help='On logging',
+    )
+    args = parser.parse_args()
+
+    url = args.url
+    routes = islice(load_routes(), args.routes_number)
 
     receive_channels = []
     send_channels = []
 
     async def create_one_bus(route, send_channel):
-        async with limit:
-            await run_bus(url, generate_bus_id(route['name']), route, send_channel)
+        await run_bus(
+            url,
+            args.emulator_id + generate_bus_id(route['name']),
+            route,
+            send_channel,
+            args.refresh_timeout
+        )
 
     async def worker(route, send_channel):
         async with trio.open_nursery() as nursery:
-            for _ in range(random.randint(27, 33)):
+            for _ in range(args.buses_per_route):
                 nursery.start_soon(create_one_bus, route, send_channel)
 
-    for _ in range(10):
-        send_channel, receive_channel = trio.open_memory_channel(500)
+    for _ in range(args.websocket_number):
+        send_channel, receive_channel = trio.open_memory_channel(1000)
         receive_channels.append(receive_channel)
         send_channels.append(send_channel)
 
