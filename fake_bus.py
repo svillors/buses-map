@@ -23,15 +23,15 @@ def load_routes(directory_path='routes'):
                 yield json.load(file)
 
 
-async def run_bus(url, bus_id, route):
+async def run_bus(url, bus_id, route, send_channel):
     route_id = route.get('name')
     coords = route.get('coordinates')
     start = random.randrange(len(coords))
     lap = coords[start:] + coords[:start]
     try:
-        async with open_websocket_url(url) as ws:
+        async with send_channel:
             for lat, lon in cycle(lap):
-                await ws.send_message(json.dumps(
+                await send_channel.send(json.dumps(
                     {
                         "busId": bus_id, "lat": lat,
                         "lng": lon, "route": route_id
@@ -42,22 +42,41 @@ async def run_bus(url, bus_id, route):
         print('Connection attempt failed: %s' % ose, file=stderr)
 
 
+async def send_updates(url, receive_channel):
+    async with open_websocket_url(url) as ws, receive_channel:
+        async for message in receive_channel:
+            await ws.send_message(message)
+
+
 async def main():
     url = 'ws://127.0.0.1:8080'
     routes = load_routes()
-    limit = trio.Semaphore(200)
+    limit = trio.Semaphore(20000)
 
-    async def create_one_bus(route):
+    receive_channels = []
+    send_channels = []
+
+    async def create_one_bus(route, send_channel):
         async with limit:
-            await run_bus(url, generate_bus_id(route['name']), route)
+            await run_bus(url, generate_bus_id(route['name']), route, send_channel)
 
-    async def worker(route):
+    async def worker(route, send_channel):
         async with trio.open_nursery() as nursery:
-            for _ in range(random.randint(1, 4)):
-                nursery.start_soon(create_one_bus, route)
+            for _ in range(random.randint(27, 33)):
+                nursery.start_soon(create_one_bus, route, send_channel)
+
+    for _ in range(10):
+        send_channel, receive_channel = trio.open_memory_channel(500)
+        receive_channels.append(receive_channel)
+        send_channels.append(send_channel)
 
     async with trio.open_nursery() as nursery:
-        for route in routes:
-            nursery.start_soon(worker, route)
+        for receive_channel in receive_channels:
+            nursery.start_soon(send_updates, url, receive_channel)
 
-trio.run(main)
+        for route in routes:
+            nursery.start_soon(worker, route, random.choice(send_channels))
+
+
+if __name__ == "__main__":
+    trio.run(main)
