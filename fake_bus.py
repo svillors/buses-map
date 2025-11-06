@@ -3,11 +3,23 @@ import json
 import random
 import string
 import argparse
+from functools import wraps
 from itertools import cycle, islice
 from sys import stderr
 
 import trio
-from trio_websocket import open_websocket_url
+from trio_websocket import open_websocket_url, HandshakeError
+
+
+def relaunch_on_disconnect(async_function, *args, **kwargs):
+    @wraps(async_function)
+    async def wraper(*args, **kwargs):
+        while True:
+            try:
+                return await async_function(*args, **kwargs)
+            except HandshakeError:
+                await trio.sleep(2)
+    return wraper
 
 
 def generate_bus_id(route_id):
@@ -42,7 +54,7 @@ async def run_bus(url, bus_id, route, send_channel, delay):
     except OSError as ose:
         print('Connection attempt failed: %s' % ose, file=stderr)
 
-
+@relaunch_on_disconnect
 async def send_updates(url, receive_channel):
     async with open_websocket_url(url) as ws, receive_channel:
         async for message in receive_channel:
