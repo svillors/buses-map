@@ -13,6 +13,14 @@ logging.getLogger("trio-websocket").setLevel(logging.WARNING)
 buses = {}
 
 
+def is_inside(bounds, lat, lng):
+    coords = bounds['data']
+    return (
+        (coords['south_lat'] <= lat <= coords['north_lat'])
+        and (coords['west_lng'] <= lng <= coords['east_lng'])
+    )
+
+
 async def server(request):
     ws = await request.accept()
     while True:
@@ -24,18 +32,16 @@ async def server(request):
             break
 
 
-async def talk_to_browser(ws):
-    while True:
-        try:
-            buses_info = list(buses.values())
-            payload = json.dumps({
-                "msgType": "Buses",
-                "buses": buses_info
-            })
-            await ws.send_message(payload)
-            await trio.sleep(1)
-        except ConnectionClosed:
-            break
+async def send_buses(ws, bounds):
+    visible_buses = [
+        bus for bus in buses.values()
+        if is_inside(bounds, bus['lat'], bus['lng'])
+    ]
+    payload = json.dumps({
+        "msgType": "Buses",
+        "buses": visible_buses,
+    })
+    await ws.send_message(payload)
 
 
 async def listen_browser(ws):
@@ -43,6 +49,8 @@ async def listen_browser(ws):
         try:
             message = await ws.get_message()
             logger.debug(message)
+            bounds = json.loads(message)
+            await send_buses(ws, bounds)
         except ConnectionClosed:
             pass
 
@@ -50,7 +58,6 @@ async def listen_browser(ws):
 async def connect_to_browser(request):
     ws = await request.accept()
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(talk_to_browser, ws)
         nursery.start_soon(listen_browser, ws)
 
 
