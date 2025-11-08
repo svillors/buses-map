@@ -1,5 +1,6 @@
 import json
 import logging
+from dataclasses import dataclass, asdict
 from functools import partial
 
 import trio
@@ -11,6 +12,38 @@ logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("trio-websocket").setLevel(logging.WARNING)
 
 buses = {}
+
+
+@dataclass
+class Bus:
+    busId: str
+    lat: float
+    lng: float
+    route: str
+
+
+@dataclass
+class WindowBounds:
+    south_lat: float
+    north_lat: float
+    west_lng: float
+    east_lng: float
+
+    @classmethod
+    def from_bounds(cls, bounds):
+        coords = bounds['data']
+        return cls(
+            south_lat=coords["south_lat"],
+            north_lat=coords["north_lat"],
+            west_lng=coords["west_lng"],
+            east_lng=coords["east_lng"],
+        )
+
+    def is_inside(self, lat, lng):
+        return (
+            self.south_lat <= lat <= self.north_lat
+            and self.west_lng <= lng <= self.east_lng
+        )
 
 
 def is_inside(bounds, lat, lng):
@@ -27,15 +60,17 @@ async def server(request):
         try:
             message = await ws.get_message()
             bus_info = json.loads(message)
-            buses[bus_info['busId']] = bus_info
+            bus = Bus(**bus_info)
+            buses[bus.busId] = bus
         except ConnectionClosed:
             break
 
 
 async def send_buses(ws, bounds):
     visible_buses = [
-        bus for bus in buses.values()
-        if is_inside(bounds, bus['lat'], bus['lng'])
+        asdict(bus)
+        for bus in buses.values()
+        if bounds.is_inside(bus.lat, bus.lng)
     ]
     payload = json.dumps({
         "msgType": "Buses",
@@ -49,7 +84,7 @@ async def listen_browser(ws):
         try:
             message = await ws.get_message()
             logger.debug(message)
-            bounds = json.loads(message)
+            bounds = WindowBounds.from_bounds(json.loads(message))
             await send_buses(ws, bounds)
         except ConnectionClosed:
             pass
