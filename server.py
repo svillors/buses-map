@@ -29,29 +29,18 @@ class WindowBounds:
     west_lng: float
     east_lng: float
 
-    @classmethod
-    def from_bounds(cls, bounds):
-        coords = bounds['data']
-        return cls(
-            south_lat=coords["south_lat"],
-            north_lat=coords["north_lat"],
-            west_lng=coords["west_lng"],
-            east_lng=coords["east_lng"],
-        )
-
     def is_inside(self, lat, lng):
         return (
             self.south_lat <= lat <= self.north_lat
             and self.west_lng <= lng <= self.east_lng
         )
 
-
-def is_inside(bounds, lat, lng):
-    coords = bounds['data']
-    return (
-        (coords['south_lat'] <= lat <= coords['north_lat'])
-        and (coords['west_lng'] <= lng <= coords['east_lng'])
-    )
+    def update(self, bounds):
+        coords = bounds['data']
+        self.south_lat = coords["south_lat"]
+        self.north_lat = coords["north_lat"]
+        self.west_lng = coords["west_lng"]
+        self.east_lng = coords["east_lng"]
 
 
 async def server(request):
@@ -79,21 +68,31 @@ async def send_buses(ws, bounds):
     await ws.send_message(payload)
 
 
-async def listen_browser(ws):
+async def talk_to_browser(ws, window_bounds):
+    while True:
+        try:
+            await send_buses(ws, window_bounds)
+            await trio.sleep(1)
+        except ConnectionClosed:
+            break
+
+
+async def listen_browser(ws, window_bounds):
     while True:
         try:
             message = await ws.get_message()
             logger.debug(message)
-            bounds = WindowBounds.from_bounds(json.loads(message))
-            await send_buses(ws, bounds)
+            window_bounds.update(json.loads(message))
         except ConnectionClosed:
-            pass
+            break
 
 
 async def connect_to_browser(request):
     ws = await request.accept()
+    window_bounds = WindowBounds(1, 1, 1, 1)
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(listen_browser, ws)
+        nursery.start_soon(listen_browser, ws, window_bounds)
+        nursery.start_soon(talk_to_browser, ws, window_bounds)
 
 
 async def main():
