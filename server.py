@@ -44,8 +44,49 @@ class WindowBounds:
         self.east_lng = coords["east_lng"]
 
 
-async def server(request):
+def validate_bounds(bounds):
+    errors = []
+    try:
+        data = json.loads(bounds)
+    except json.JSONDecodeError:
+        errors.append("Requires valid JSON")
+        return errors
+
+    if not isinstance(data, dict):
+        errors.append('Requires JSON object')
+        return errors
+
+    msg_type = data.get("msgType")
+    if msg_type is None:
+        errors.append("Requires msgType specified")
+    elif msg_type != "newBounds":
+        errors.append('Incorrect msgType')
+
+    coords = data.get("data")
+    if not isinstance(coords, dict):
+        errors.append('Field data must be JSON object')
+        return errors
+
+    required_fields = ("south_lat", "north_lat", "west_lng", "east_lng")
+    for field in required_fields:
+        if field not in coords:
+            errors.append('Missing fileds in coordinates')
+            return errors
+    try:
+        float(coords["south_lat"])
+        float(coords["north_lat"])
+        float(coords["west_lng"])
+        float(coords["east_lng"])
+    except TypeError:
+        errors.append('Invalid coordinates')
+
+    return errors
+
+
+async def server(logging, request):
     ws = await request.accept()
+    if logging:
+        logger.debug('Connected. Started colleting bus data')
     while True:
         try:
             message = await ws.get_message()
@@ -53,6 +94,8 @@ async def server(request):
             bus = Bus(**bus_info)
             buses[bus.busId] = bus
         except ConnectionClosed:
+            if logging:
+                logger.error('Connection closed to server')
             break
 
 
@@ -69,31 +112,48 @@ async def send_buses(ws, bounds):
     await ws.send_message(payload)
 
 
-async def talk_to_browser(ws, window_bounds):
+async def talk_to_browser(ws, window_bounds, logging):
+    if logging:
+        logger.debug('Connected. Started send data')
     while True:
         try:
             await send_buses(ws, window_bounds)
             await trio.sleep(1)
         except ConnectionClosed:
+            if logging:
+                logger.error('Connection closed to client')
             break
 
 
-async def listen_browser(ws, window_bounds):
+async def listen_browser(ws, window_bounds, logging):
+    if logging:
+        logger.debug('Connected. Started geting user map data')
     while True:
         try:
             message = await ws.get_message()
-            logger.debug(message)
+            errors = validate_bounds(message)
+            if errors:
+                await ws.send_message(json.dumps({
+                    "msgType": "Errors",
+                    "errors": errors
+                }))
+                if logging:
+                    logger.warning(f'Invalid response: {message}')
+                continue
+
             window_bounds.update(json.loads(message))
         except ConnectionClosed:
+            if logging:
+                logger.error('Connection closed to client')
             break
 
 
-async def connect_to_browser(request):
+async def connect_to_browser(logging, request):
     ws = await request.accept()
     window_bounds = WindowBounds(1, 1, 1, 1)
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(listen_browser, ws, window_bounds)
-        nursery.start_soon(talk_to_browser, ws, window_bounds)
+        nursery.start_soon(listen_browser, ws, window_bounds, logging)
+        nursery.start_soon(talk_to_browser, ws, window_bounds, logging)
 
 
 async def main():
@@ -111,22 +171,23 @@ async def main():
         default=8000
     )
     parser.add_argument(
-            '-v', '--logging',
-            help='On logging'
+        '-v', '--logging',
+        help='On logging',
+        action='store_true'
     )
     args = parser.parse_args()
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(
             partial(
-                serve_websocket, server,
+                serve_websocket, partial(server, args.logging),
                 '127.0.0.1', args.bus_port,
                 ssl_context=None
             )
         )
         nursery.start_soon(
             partial(
-                serve_websocket, connect_to_browser,
+                serve_websocket, partial(connect_to_browser, args.logging),
                 '127.0.0.1', args.browser_port,
                 ssl_context=None
             )
