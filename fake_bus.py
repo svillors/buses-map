@@ -54,6 +54,7 @@ async def run_bus(url, bus_id, route, send_channel, delay):
     except OSError as ose:
         print('Connection attempt failed: %s' % ose, file=stderr)
 
+
 @relaunch_on_disconnect
 async def send_updates(url, receive_channel):
     async with open_websocket_url(url) as ws, receive_channel:
@@ -67,7 +68,7 @@ async def main():
         '-u', '--url',
         help='url to send buses data',
         type=str,
-        default='ws://127.0.0.1:8080' # удалить
+        default='ws://127.0.0.1:8080'
     )
     parser.add_argument(
         '-r', '--routes-number',
