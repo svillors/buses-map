@@ -1,5 +1,6 @@
 import json
 import logging
+import argparse
 from dataclasses import dataclass, asdict
 from functools import partial
 
@@ -96,9 +97,40 @@ async def connect_to_browser(request):
 
 
 async def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '-b', '--bus-port',
+        help='port for buses data',
+        type=int,
+        default=8080
+    )
+    parser.add_argument(
+        '-B', '--browser-port',
+        help='port to connect browser',
+        type=int,
+        default=8000
+    )
+    parser.add_argument(
+            '-v', '--logging',
+            help='On logging'
+    )
+    args = parser.parse_args()
+
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(partial(serve_websocket, server, '127.0.0.1', 8080, ssl_context=None))
-        nursery.start_soon(partial(serve_websocket, connect_to_browser, '127.0.0.1', 8000, ssl_context=None))
+        nursery.start_soon(
+            partial(
+                serve_websocket, server,
+                '127.0.0.1', args.bus_port,
+                ssl_context=None
+            )
+        )
+        nursery.start_soon(
+            partial(
+                serve_websocket, connect_to_browser,
+                '127.0.0.1', args.browser_port,
+                ssl_context=None
+            )
+        )
 
-
-trio.run(main)
+if __name__ == "__main__":
+    trio.run(main)
