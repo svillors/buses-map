@@ -68,17 +68,55 @@ def validate_bounds(bounds):
         return errors
 
     required_fields = ("south_lat", "north_lat", "west_lng", "east_lng")
-    for field in required_fields:
-        if field not in coords:
-            errors.append('Missing fileds in coordinates')
-            return errors
+    missing = [field for field in required_fields if field not in coords]
+    if missing:
+        errors.append('Missing fields: " + ", '.join(missing))
+        return errors
+
     try:
         float(coords["south_lat"])
         float(coords["north_lat"])
         float(coords["west_lng"])
         float(coords["east_lng"])
-    except TypeError:
+    except (TypeError, ValueError):
         errors.append('Invalid coordinates')
+
+    return errors
+
+
+def validate_bus_info(bus_info):
+    errors = []
+
+    try:
+        data = json.loads(bus_info)
+    except json.JSONDecodeError:
+        errors.append("Requires valid JSON")
+        return errors
+
+    if not isinstance(data, dict):
+        errors.append("Requires JSON object")
+        return errors
+
+    required_fields = ("busId", "lat", "lng", "route")
+    missing = [field for field in required_fields if field not in data]
+    if missing:
+        errors.append("Missing fields: " + ", ".join(missing))
+        return errors
+
+    bus_id = data.get("busId")
+    route = data.get("route")
+
+    if bus_id is None:
+        errors.append("busId must be non-empty")
+    if route is None:
+        errors.append("route must be non-empty")
+
+    try:
+        float(data["lat"])
+        float(data["lng"])
+    except (TypeError, ValueError):
+        errors.append("lat and lng must be numeric")
+        return errors
 
     return errors
 
@@ -90,6 +128,15 @@ async def server(logging, request):
     while True:
         try:
             message = await ws.get_message()
+            errors = validate_bus_info(message)
+            if errors:
+                await ws.send_message(json.dumps({
+                    "msgType": "Errors",
+                    "errors": errors
+                }))
+                if logging:
+                    logger.warning(f'Invalid response: {message}')
+                continue
             bus_info = json.loads(message)
             bus = Bus(**bus_info)
             buses[bus.busId] = bus
