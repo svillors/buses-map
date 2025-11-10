@@ -102,6 +102,7 @@ async def main():
     parser.add_argument(
         '-v', '--logging',
         help='On logging',
+        action='store_true'
     )
     args = parser.parse_args()
 
