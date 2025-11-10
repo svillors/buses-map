@@ -6,10 +6,71 @@
 
 ## Как запустить
 
+### Карта
 - Скачайте код
 - Откройте в браузере файл index.html
 
+### Сервер
+Сервер написан на python3, код был написан с использованием версии 3.10.
+Установите зависимости с помощью команды
+```bash
+pip install -r requirements.txt
+```
+#### Запуск сервера
+У сервера имеются аргументы командной строки:
+```bash
+usage: server.py [-h] [-b BUS_PORT] [-B BROWSER_PORT] [-v]
 
+options:
+  -h, --help            show this help message and exit
+  -b BUS_PORT, --bus-port BUS_PORT
+                        port for buses data
+  -B BROWSER_PORT, --browser-port BROWSER_PORT
+                        port to connect browser
+  -v, --logging         On logging
+```
+Поэтому запуск может выглядеть вот так:
+```bash
+python3 server.py -b 8080 -B 8000 -v
+```
+#### Запуск эмулятора автобусов
+Имеется эмаулятор движений автобусов, созданный для тесторивания.
+
+Также имеются аргументы командной строки:
+```bash
+usage: fake_bus.py [-h] [-u URL] [-r ROUTES_NUMBER] [-b BUSES_PER_ROUTE]
+                   [-w WEBSOCKET_NUMBER] [-e EMULATOR_ID] [-t REFRESH_TIMEOUT]
+                   [-v LOGGING]
+
+options:
+  -h, --help            show this help message and exit
+  -u URL, --url URL     url to send buses data
+  -r ROUTES_NUMBER, --routes-number ROUTES_NUMBER
+                        quantity of buses routes
+  -b BUSES_PER_ROUTE, --buses-per-route BUSES_PER_ROUTE
+                        quantity of buses per route
+  -w WEBSOCKET_NUMBER, --websocket-number WEBSOCKET_NUMBER
+                        quantity of opened websockets
+  -e EMULATOR_ID, --emulator-id EMULATOR_ID
+                        prefix to id of buses
+  -t REFRESH_TIMEOUT, --refresh-timeout REFRESH_TIMEOUT
+                        delay in updating coordinates
+  -v LOGGING, --logging LOGGING
+                        On logging
+```
+Поэтому запуск может выглядеть так:
+```bash
+python3 fake_bus.py -u ws://localhost:8080 -r 1000 -w 10 -e 13- -t 1 -v
+```
+
+#### Эмуляторы некорректных запросов
+В репозитории также имеются эмуляторы некорректных запросов. Она нужны для тестирования валидации запросов.
+
+Запускать их нужно только при включённом сервере командами:
+```bash
+python3 harmful_bus.py
+python3 harmful_client.py
+```
 ## Настройки
 
 Внизу справа на странице можно включить отладочный режим логгирования и указать нестандартный адрес веб-сокета.
