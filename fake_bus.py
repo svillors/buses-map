@@ -1,8 +1,9 @@
 import os
 import json
 import random
-import string
 import argparse
+import uuid
+import glob
 from functools import wraps
 from itertools import cycle, islice
 from sys import stderr
@@ -23,17 +24,15 @@ def relaunch_on_disconnect(async_function, *args, **kwargs):
 
 
 def generate_bus_id(route_id):
-    alphabet = string.ascii_letters + string.digits
-    bus_index = ''.join(random.choice(alphabet) for _ in range(5))
+    bus_index = str(uuid.uuid4())[:6]
     return f"{route_id}-{bus_index}"
 
 
 def load_routes(directory_path='routes'):
-    for filename in os.listdir(directory_path):
-        if filename.endswith(".json"):
-            filepath = os.path.join(directory_path, filename)
-            with open(filepath, 'r', encoding='utf8') as file:
-                yield json.load(file)
+    pattern = os.path.join(directory_path, '*.json')
+    for filepath in glob.iglob(pattern):
+        with open(filepath, 'r', encoding='utf8') as file:
+            yield json.load(file)
 
 
 async def run_bus(url, bus_id, route, send_channel, delay):
