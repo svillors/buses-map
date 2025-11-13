@@ -1,11 +1,12 @@
 import json
 import logging
 import argparse
-from dataclasses import dataclass, asdict
 from functools import partial
+from typing import Literal
 
 import trio
 from trio_websocket import serve_websocket, ConnectionClosed
+from pydantic import BaseModel, ValidationError
 
 
 logger = logging.getLogger(__name__)
@@ -15,16 +16,14 @@ logging.getLogger("trio-websocket").setLevel(logging.WARNING)
 buses = {}
 
 
-@dataclass
-class Bus:
+class Bus(BaseModel):
     busId: str
     lat: float
     lng: float
     route: str
 
 
-@dataclass
-class WindowBounds:
+class WindowBounds(BaseModel):
     south_lat: float
     north_lat: float
     west_lng: float
@@ -36,89 +35,14 @@ class WindowBounds:
             and self.west_lng <= lng <= self.east_lng
         )
 
-    def update(self, bounds):
-        coords = bounds['data']
-        self.south_lat = coords["south_lat"]
-        self.north_lat = coords["north_lat"]
-        self.west_lng = coords["west_lng"]
-        self.east_lng = coords["east_lng"]
+    def update_from_bounds_msg(self, bounds_msg):
+        for key, value in bounds_msg.data.model_dump().items():
+            setattr(self, key, value)
 
 
-def validate_bounds(bounds):
-    errors = []
-    try:
-        data = json.loads(bounds)
-    except json.JSONDecodeError:
-        errors.append("Requires valid JSON")
-        return errors
-
-    if not isinstance(data, dict):
-        errors.append('Requires JSON object')
-        return errors
-
-    msg_type = data.get("msgType")
-    if msg_type is None:
-        errors.append("Requires msgType specified")
-    elif msg_type != "newBounds":
-        errors.append('Incorrect msgType')
-
-    coords = data.get("data")
-    if not isinstance(coords, dict):
-        errors.append('Field data must be JSON object')
-        return errors
-
-    required_fields = ("south_lat", "north_lat", "west_lng", "east_lng")
-    missing = [field for field in required_fields if field not in coords]
-    if missing:
-        errors.append('Missing fields: " + ", '.join(missing))
-        return errors
-
-    try:
-        float(coords["south_lat"])
-        float(coords["north_lat"])
-        float(coords["west_lng"])
-        float(coords["east_lng"])
-    except (TypeError, ValueError):
-        errors.append('Invalid coordinates')
-
-    return errors
-
-
-def validate_bus_info(bus_info):
-    errors = []
-
-    try:
-        data = json.loads(bus_info)
-    except json.JSONDecodeError:
-        errors.append("Requires valid JSON")
-        return errors
-
-    if not isinstance(data, dict):
-        errors.append("Requires JSON object")
-        return errors
-
-    required_fields = ("busId", "lat", "lng", "route")
-    missing = [field for field in required_fields if field not in data]
-    if missing:
-        errors.append("Missing fields: " + ", ".join(missing))
-        return errors
-
-    bus_id = data.get("busId")
-    route = data.get("route")
-
-    if bus_id is None:
-        errors.append("busId must be non-empty")
-    if route is None:
-        errors.append("route must be non-empty")
-
-    try:
-        float(data["lat"])
-        float(data["lng"])
-    except (TypeError, ValueError):
-        errors.append("lat and lng must be numeric")
-        return errors
-
-    return errors
+class BoundsMessage(BaseModel):
+    msgType: Literal["newBounds"]
+    data: WindowBounds
 
 
 async def server(logging, request):
@@ -128,17 +52,16 @@ async def server(logging, request):
     while True:
         try:
             message = await ws.get_message()
-            errors = validate_bus_info(message)
-            if errors:
+            try:
+                bus = Bus.model_validate_json(message)
+            except ValidationError as e:
                 await ws.send_message(json.dumps({
                     "msgType": "Errors",
-                    "errors": errors
+                    "errors": [f"{error['msg']}" for error in e.errors()]
                 }))
                 if logging:
                     logger.warning(f'Invalid response: {message}')
                 continue
-            bus_info = json.loads(message)
-            bus = Bus(**bus_info)
             buses[bus.busId] = bus
         except ConnectionClosed:
             if logging:
@@ -148,7 +71,7 @@ async def server(logging, request):
 
 async def send_buses(ws, bounds):
     visible_buses = [
-        asdict(bus)
+        bus.model_dump()
         for bus in buses.values()
         if bounds.is_inside(bus.lat, bus.lng)
     ]
@@ -178,17 +101,18 @@ async def listen_browser(ws, window_bounds, logging):
     while True:
         try:
             message = await ws.get_message()
-            errors = validate_bounds(message)
-            if errors:
+            try:
+                bounds_message = BoundsMessage.model_validate_json(message)
+            except ValidationError as e:
                 await ws.send_message(json.dumps({
                     "msgType": "Errors",
-                    "errors": errors
+                    "errors": [f"{error['msg']}" for error in e.errors()]
                 }))
                 if logging:
                     logger.warning(f'Invalid response: {message}')
                 continue
 
-            window_bounds.update(json.loads(message))
+            window_bounds.update_from_bounds_msg(bounds_message)
         except ConnectionClosed:
             if logging:
                 logger.error('Connection closed to client')
@@ -197,7 +121,10 @@ async def listen_browser(ws, window_bounds, logging):
 
 async def connect_to_browser(logging, request):
     ws = await request.accept()
-    window_bounds = WindowBounds(1, 1, 1, 1)
+    window_bounds = WindowBounds(
+        north_lat=1, south_lat=1,
+        east_lng=1, west_lng=1
+    )
     async with trio.open_nursery() as nursery:
         nursery.start_soon(listen_browser, ws, window_bounds, logging)
         nursery.start_soon(talk_to_browser, ws, window_bounds, logging)
